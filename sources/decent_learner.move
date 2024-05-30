@@ -108,6 +108,7 @@ module decent_learner::decent_learner {
 
     // Function to add a new course
     public fun add_course(
+        portal: &mut Portal,
         title: String,
         url: String,
         educator: address,
@@ -116,14 +117,18 @@ module decent_learner::decent_learner {
         ctx: &mut TxContext
     ) : Course {
         let id = object::new(ctx); // Generate a new unique ID
-        Course {
+        let course = Course {
             id,
             title,
             url,
             educator,
             price,
             duration,
-        }
+        };
+
+        // Add course to portal's course list
+        vector::push_back(&mut portal.courses, object::id(&course));
+        course
     }
 
     // Function for student to deposit SUI tokens
@@ -175,32 +180,29 @@ module decent_learner::decent_learner {
         table::add(&mut portal.payments, object::id(&receipt), receipt);
     }
 
-    // get course
+    // Function to get course details
     public fun get_course_details(
         student: &mut Student,
-        course: &mut Course,
+        course: &Course,
         _ctx: &mut TxContext
-    ):CourseDetails {
+    ): CourseDetails {
         let course_id = object::uid_to_inner(&course.id);
 
         assert!(vector::contains<ID>(&student.completed_courses, &course_id), ENotEnrolled);
 
-        let course_details = CourseDetails {
+        CourseDetails {
             title: course.title,
             url: course.url,
             educator: course.educator,
             price: course.price,
             duration: course.duration
-        };
-
-        course_details
-
+        }
     }
 
     // Function to issue a certificate to the student for completing a course
     public fun get_certificate(
         student: &mut Student,
-        course: &mut Course,
+        course: &Course,
         receipt: &Receipt,
         clock: &Clock,
         ctx: &mut TxContext
@@ -212,6 +214,9 @@ module decent_learner::decent_learner {
         assert!(vector::contains<ID>(&student.courses, &course_id), EInvalidCourse);
         assert!(!vector::contains<ID>(&student.completed_courses, &course_id), EAlreadyEnrolled);
         assert!(clock::timestamp_ms(clock) >= receipt.paid_date + course.duration, EIncompleteCourseDuration);
+
+        // Mark course as completed
+        vector::push_back(&mut student.completed_courses, course_id);
 
         // Create a new certificate
         let certificate = Certificate {
@@ -242,5 +247,26 @@ module decent_learner::decent_learner {
         transfer::public_transfer(amount_to_withdraw, portal.portal);
     
         true // Successful withdrawal
+    }
+
+    // Function to list all courses in the portal
+    public fun list_courses(
+        portal: &Portal
+    ): vector<ID> {
+        portal.courses
+    }
+
+    // Function to list all enrolled courses for a student
+    public fun list_enrolled_courses(
+        student: &Student
+    ): vector<ID> {
+        student.courses
+    }
+
+    // Function to list all completed courses for a student
+    public fun list_completed_courses(
+        student: &Student
+    ): vector<ID> {
+        student.completed_courses
     }
 }

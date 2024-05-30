@@ -40,6 +40,14 @@ module decent_learner::decent_learner {
         duration: u64, // Duration of the course in milliseconds
         price: u64, // Price of the course in SUI tokens
     }
+    
+    struct CourseDetails has copy, drop {
+        title: String, // Title of the course
+        url: String, // URL of the course content
+        educator: address, // Address of the course educator
+        duration: u64, // Duration of the course in milliseconds
+        price: u64, // Price of the course in SUI tokens
+    }
 
     // Struct to represent a receipt
     struct Receipt has key, store {
@@ -65,6 +73,7 @@ module decent_learner::decent_learner {
     const EAlreadyEnrolled: u64 = 2; // Error code for already enrolled course
     const EInvalidCourse: u64 = 3; // Error code for invalid course
     const EIncompleteCourseDuration: u64 = 4; // Error code for incomplete course duration
+    const ENotEnrolled: u64 = 5; // Error code for not enrolled course
 
     // Functions for managing the e-learning platform
 
@@ -164,6 +173,28 @@ module decent_learner::decent_learner {
         vector::push_back(&mut student.courses, object::id(course));
         // Add the receipt to the portal's payments table
         table::add(&mut portal.payments, object::id(&receipt), receipt);
+    }
+
+    // get course
+    public fun get_course_details(
+        student: &mut Student,
+        course: &mut Course,
+        _ctx: &mut TxContext
+    ):CourseDetails {
+        let course_id = object::uid_to_inner(&course.id);
+
+        assert!(vector::contains<ID>(&student.completed_courses, &course_id), ENotEnrolled);
+
+        let course_details = CourseDetails {
+            title: course.title,
+            url: course.url,
+            educator: course.educator,
+            price: course.price,
+            duration: course.duration
+        };
+
+        course_details
+
     }
 
     // Function to issue a certificate to the student for completing a course

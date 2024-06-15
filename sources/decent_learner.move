@@ -6,7 +6,7 @@ module decent_learner::decent_learner {
     use sui::clock::{Self, Clock};
     use sui::object::{Self, ID, UID};
     use sui::balance::{Self, Balance};
-    use sui::tx_context::{Self, TxContext};
+    use sui::tx_context::{Self, TxContext, sender};
     use sui::table::{Self, Table};
 
     use std::string::String;
@@ -27,7 +27,7 @@ module decent_learner::decent_learner {
     struct Portal has key, store {
         id: UID, // Unique identifier for the portal
         balance: Balance<SUI>, // Balance of SUI tokens for the portal
-        courses: vector<ID>, // List of course IDs available on the portal
+        courses: Table<ID, Course>, // List of course IDs available on the portal
         payments: Table<ID, Receipt>, // Table of payment receipts
     }
 
@@ -83,7 +83,7 @@ module decent_learner::decent_learner {
         let portal = Portal {
             id,
             balance: balance::zero<SUI>(), // Initialize balance to zero
-            courses: vector::empty<ID>(), // Initialize empty courses list
+            courses: table::new(ctx), // Initialize empty courses list
             payments: table::new<ID, Receipt>(ctx), // Initialize empty payments table
         };
         let cap = PortalCap {
@@ -95,13 +95,12 @@ module decent_learner::decent_learner {
 
     // Function to add a new student
     public fun add_student(
-        student: address,
         ctx: &mut TxContext
     ) : Student {
         let id = object::new(ctx); // Generate a new unique ID
         Student {
             id,
-            student,
+            student: sender(ctx),
             balance: balance::zero<SUI>(), // Initialize balance to zero
             courses: vector::empty<ID>(), // Initialize empty enrolled courses list
             completed_courses: vector::empty<ID>(), // Initialize empty completed courses list
@@ -117,8 +116,9 @@ module decent_learner::decent_learner {
         price: u64,
         duration: u64,
         ctx: &mut TxContext
-    ) : Course {
+    ) {
         let id = object::new(ctx); // Generate a new unique ID
+        let inner = object::uid_to_inner(&id);
         let course = Course {
             id,
             title,
@@ -127,10 +127,8 @@ module decent_learner::decent_learner {
             price,
             duration,
         };
-
         // Add course to portal's course list
-        vector::push_back(&mut portal.courses, object::id(&course));
-        course
+        table::add(&mut portal.courses, inner, course);
     }
 
     // Function for student to deposit SUI tokens
@@ -153,9 +151,6 @@ module decent_learner::decent_learner {
         assert!(balance::value(&student.balance) >= course.price, EInsufficientBalance);
 
         let course_id = object::uid_to_inner(&course.id);
-
-        // Check if the course is valid
-        assert!(vector::contains<ID>(&portal.courses, &course_id), EInvalidCourse);
 
         // Check if the student is already enrolled
         assert!(!vector::contains<ID>(&student.courses, &course_id), EAlreadyEnrolled);
@@ -227,13 +222,6 @@ module decent_learner::decent_learner {
         // Withdraw the specified amount from the portal's balance
         let coin = coin::take(&mut portal.balance, amount, ctx);
         coin
-    }
-
-    // Function to list all courses in the portal
-    public fun list_courses(
-        portal: &Portal
-    ): vector<ID> {
-        portal.courses
     }
 
     // Function to list all enrolled courses for a student

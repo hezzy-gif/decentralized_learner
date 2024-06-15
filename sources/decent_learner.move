@@ -52,6 +52,7 @@ module decent_learner::decent_learner {
         url: String, // URL of the course content
         educator: address, // Address of the course educator
         duration: u64, // Duration of the course in milliseconds
+        students: Table<address, bool>, // represents the students education
         price: u64, // Price of the course in SUI tokens
     }
     // Struct to represent a receipt
@@ -125,6 +126,7 @@ module decent_learner::decent_learner {
             url,
             educator,
             price,
+            students: table::new(ctx),
             duration,
         };
         // Add course to portal's course list
@@ -143,10 +145,11 @@ module decent_learner::decent_learner {
     public fun enroll(
         portal: &mut Portal,
         student: &mut Student,
-        course: &mut Course,
+        course_: ID,
         clock: &Clock,
         ctx: &mut TxContext
     ) {
+        let course = table::borrow_mut(&mut portal.courses, course_);
         // Check if student has sufficient balance
         assert!(balance::value(&student.balance) >= course.price, EInsufficientBalance);
 
@@ -160,7 +163,6 @@ module decent_learner::decent_learner {
 
         // Transfer the payment to the educator
         transfer::public_transfer(payment, course.educator);
-
         // Create a new receipt for the payment
         let receipt = Receipt {
             id: object::new(ctx),
@@ -169,31 +171,38 @@ module decent_learner::decent_learner {
             amount: course.price,
             paid_date: clock::timestamp_ms(clock),
         };
-
         // Add the course to the student's enrolled courses list
         vector::push_back(&mut student.courses, object::id(course));
         // Add the receipt to the portal's payments table
         table::add(&mut portal.payments, object::id(&receipt), receipt);
     }
 
+    public fun approve_student_course(cap: &PortalCap, self: &mut Portal, course_: ID, student: address) {
+        assert!(object::id(self) == cap.to, ENotPortal);
+        let course = table::borrow_mut(&mut self.courses, course_);
+        table::add(&mut course.students, student, true);
+    }
+
     // Function to issue a certificate to the student for completing a course
     public fun get_certificate(
+        self: &mut Portal,
         student: &mut Student,
-        course: &Course,
+        course_: ID,
         receipt: &Receipt,
         clock: &Clock,
         ctx: &mut TxContext
     ): Certificate {
-        let course_id = object::uid_to_inner(&course.id);
+        let course = table::borrow_mut(&mut self.courses, course_);
         
         // Check if the receipt belongs to the student and the course is valid
         assert!(object::id(student) == receipt.student_id, EInvalidCourse);
-        assert!(vector::contains<ID>(&student.courses, &course_id), EInvalidCourse);
-        assert!(!vector::contains<ID>(&student.completed_courses, &course_id), EAlreadyEnrolled);
+        assert!(vector::contains<ID>(&student.courses, &course_), EInvalidCourse);
+        assert!(!vector::contains<ID>(&student.completed_courses, &course_), EAlreadyEnrolled);
         assert!(clock::timestamp_ms(clock) >= receipt.paid_date + course.duration, EIncompleteCourseDuration);
+        assert!(table::contains(&course.students, sender(ctx)), EAlreadyEnrolled);
 
         // Mark course as completed
-        vector::push_back(&mut student.completed_courses, course_id);
+        vector::push_back(&mut student.completed_courses, course_);
 
         // Create a new certificate
         let certificate = Certificate {
@@ -203,7 +212,6 @@ module decent_learner::decent_learner {
             started_date: receipt.paid_date,
             issued_date: clock::timestamp_ms(clock),
         };
-
         certificate
     }
 
@@ -218,7 +226,6 @@ module decent_learner::decent_learner {
         assert!(object::id(portal) == cap.to, ENotPortal);
         // Check if the portal has sufficient balance
         assert!(amount <= balance::value(&portal.balance), EInsufficientBalance);
-
         // Withdraw the specified amount from the portal's balance
         let coin = coin::take(&mut portal.balance, amount, ctx);
         coin

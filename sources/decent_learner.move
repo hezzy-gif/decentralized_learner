@@ -181,25 +181,6 @@ module decent_learner::decent_learner {
         table::add(&mut portal.payments, object::id(&receipt), receipt);
     }
 
-    // Function to get course details
-    public fun get_course_details(
-        student: &mut Student,
-        course: &Course,
-        _ctx: &mut TxContext
-    ): CourseDetails {
-        let course_id = object::uid_to_inner(&course.id);
-
-        assert!(vector::contains<ID>(&student.completed_courses, &course_id), ENotEnrolled);
-
-        CourseDetails {
-            title: course.title,
-            url: course.url,
-            educator: course.educator,
-            price: course.price,
-            duration: course.duration
-        }
-    }
-
     // Function to issue a certificate to the student for completing a course
     public fun get_certificate(
         student: &mut Student,

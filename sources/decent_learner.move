@@ -29,7 +29,11 @@ module decent_learner::decent_learner {
         balance: Balance<SUI>, // Balance of SUI tokens for the portal
         courses: vector<ID>, // List of course IDs available on the portal
         payments: Table<ID, Receipt>, // Table of payment receipts
-        portal: address, // Address of the portal owner
+    }
+
+    struct PortalCap has key {
+        id: UID,
+        to: ID
     }
 
     // Struct to represent a student
@@ -71,17 +75,22 @@ module decent_learner::decent_learner {
     // Functions for managing the e-learning platform
 
     // Function to add a new portal
-    public fun add_portal(
+    public fun new_portal(
         ctx: &mut TxContext
-    ) : Portal {
+    ) : (Portal, PortalCap) {
         let id = object::new(ctx); // Generate a new unique ID
-        Portal {
+        let inner_ = object::uid_to_inner(&id);
+        let portal = Portal {
             id,
             balance: balance::zero<SUI>(), // Initialize balance to zero
             courses: vector::empty<ID>(), // Initialize empty courses list
             payments: table::new<ID, Receipt>(ctx), // Initialize empty payments table
-            portal: tx_context::sender(ctx), // Set the portal owner to the transaction sender
-        }
+        };
+        let cap = PortalCap {
+            id: object::new(ctx),
+            to: inner_
+        };
+        (portal, cap)
     }
 
     // Function to add a new student
@@ -205,12 +214,13 @@ module decent_learner::decent_learner {
 
     // Function for educator to withdraw funds from the portal
     public fun withdraw(
+        cap: &PortalCap,
         portal: &mut Portal, 
         amount: u64, 
         ctx: &mut TxContext
     ) : Coin<SUI> {
         // Check if the transaction sender is the portal owner
-        assert!(portal.portal == tx_context::sender(ctx), ENotPortal);
+        assert!(object::id(portal) == cap.to, ENotPortal);
         // Check if the portal has sufficient balance
         assert!(amount <= balance::value(&portal.balance), EInsufficientBalance);
 

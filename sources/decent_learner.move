@@ -1,15 +1,25 @@
 module decent_learner::decent_learner {
     // imports
     use sui::sui::SUI;
-    use std::vector;
     use sui::transfer;
-    use std::string::String;
     use sui::coin::{Self, Coin};
     use sui::clock::{Self, Clock};
     use sui::object::{Self, ID, UID};
     use sui::balance::{Self, Balance};
     use sui::tx_context::{Self, TxContext};
     use sui::table::{Self, Table};
+
+    use std::string::String;
+    use std::vector;
+
+    // Error definitions
+    const ENotPortal: u64 = 0; // Error code for invalid portal
+    const EInsufficientBalance: u64 = 1; // Error code for insufficient balance
+    const EAlreadyEnrolled: u64 = 2; // Error code for already enrolled course
+    const EInvalidCourse: u64 = 3; // Error code for invalid course
+    const EIncompleteCourseDuration: u64 = 4; // Error code for incomplete course duration
+    const ENotEnrolled: u64 = 5; // Error code for not enrolled course
+
 
     // Struct definitions
 
@@ -66,14 +76,6 @@ module decent_learner::decent_learner {
         started_date: u64, // Timestamp when the course was started
         issued_date: u64, // Timestamp when the certificate was issued
     }
-
-    // Error definitions
-    const ENotPortal: u64 = 0; // Error code for invalid portal
-    const EInsufficientBalance: u64 = 1; // Error code for insufficient balance
-    const EAlreadyEnrolled: u64 = 2; // Error code for already enrolled course
-    const EInvalidCourse: u64 = 3; // Error code for invalid course
-    const EIncompleteCourseDuration: u64 = 4; // Error code for incomplete course duration
-    const ENotEnrolled: u64 = 5; // Error code for not enrolled course
 
     // Functions for managing the e-learning platform
 
@@ -134,10 +136,9 @@ module decent_learner::decent_learner {
     // Function for student to deposit SUI tokens
     public fun deposit(
         student: &mut Student,
-        amount: Coin<SUI>,
+        coin: Coin<SUI>,
     ) {
-        let coin = coin::into_balance(amount); // Convert Coin to Balance
-        balance::join(&mut student.balance, coin); // Add balance to student's balance
+        coin::put(&mut student.balance, coin);
     }
 
     // Function for student to enroll in a course
@@ -235,18 +236,15 @@ module decent_learner::decent_learner {
         portal: &mut Portal, 
         amount: u64, 
         ctx: &mut TxContext
-    ) : bool {
+    ) : Coin<SUI> {
         // Check if the transaction sender is the portal owner
         assert!(portal.portal == tx_context::sender(ctx), ENotPortal);
         // Check if the portal has sufficient balance
         assert!(amount <= balance::value(&portal.balance), EInsufficientBalance);
 
         // Withdraw the specified amount from the portal's balance
-        let amount_to_withdraw = coin::take(&mut portal.balance, amount, ctx);
-        // Transfer the amount to the portal owner
-        transfer::public_transfer(amount_to_withdraw, portal.portal);
-    
-        true // Successful withdrawal
+        let coin = coin::take(&mut portal.balance, amount, ctx);
+        coin
     }
 
     // Function to list all courses in the portal

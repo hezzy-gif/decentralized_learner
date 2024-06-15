@@ -50,15 +50,6 @@ module decent_learner::decent_learner {
         duration: u64, // Duration of the course in milliseconds
         price: u64, // Price of the course in SUI tokens
     }
-    
-    struct CourseDetails has copy, drop {
-        title: String, // Title of the course
-        url: String, // URL of the course content
-        educator: address, // Address of the course educator
-        duration: u64, // Duration of the course in milliseconds
-        price: u64, // Price of the course in SUI tokens
-    }
-
     // Struct to represent a receipt
     struct Receipt has key, store {
         id: UID, // Unique identifier for the receipt

@@ -1,15 +1,25 @@
 module decent_learner::decent_learner {
     // imports
     use sui::sui::SUI;
-    use std::vector;
     use sui::transfer;
-    use std::string::String;
     use sui::coin::{Self, Coin};
     use sui::clock::{Self, Clock};
     use sui::object::{Self, ID, UID};
     use sui::balance::{Self, Balance};
-    use sui::tx_context::{Self, TxContext};
+    use sui::tx_context::{Self, TxContext, sender};
     use sui::table::{Self, Table};
+
+    use std::string::String;
+    use std::vector;
+
+    // Error definitions
+    const ENotPortal: u64 = 0; // Error code for invalid portal
+    const EInsufficientBalance: u64 = 1; // Error code for insufficient balance
+    const EAlreadyEnrolled: u64 = 2; // Error code for already enrolled course
+    const EInvalidCourse: u64 = 3; // Error code for invalid course
+    const EIncompleteCourseDuration: u64 = 4; // Error code for incomplete course duration
+    const ENotEnrolled: u64 = 5; // Error code for not enrolled course
+
 
     // Struct definitions
 
@@ -17,9 +27,13 @@ module decent_learner::decent_learner {
     struct Portal has key, store {
         id: UID, // Unique identifier for the portal
         balance: Balance<SUI>, // Balance of SUI tokens for the portal
-        courses: vector<ID>, // List of course IDs available on the portal
+        courses: Table<ID, Course>, // List of course IDs available on the portal
         payments: Table<ID, Receipt>, // Table of payment receipts
-        portal: address, // Address of the portal owner
+    }
+
+    struct PortalCap has key {
+        id: UID,
+        to: ID
     }
 
     // Struct to represent a student
@@ -38,17 +52,9 @@ module decent_learner::decent_learner {
         url: String, // URL of the course content
         educator: address, // Address of the course educator
         duration: u64, // Duration of the course in milliseconds
+        students: Table<address, bool>, // represents the students education
         price: u64, // Price of the course in SUI tokens
     }
-    
-    struct CourseDetails has copy, drop {
-        title: String, // Title of the course
-        url: String, // URL of the course content
-        educator: address, // Address of the course educator
-        duration: u64, // Duration of the course in milliseconds
-        price: u64, // Price of the course in SUI tokens
-    }
-
     // Struct to represent a receipt
     struct Receipt has key, store {
         id: UID, // Unique identifier for the receipt
@@ -67,39 +73,35 @@ module decent_learner::decent_learner {
         issued_date: u64, // Timestamp when the certificate was issued
     }
 
-    // Error definitions
-    const ENotPortal: u64 = 0; // Error code for invalid portal
-    const EInsufficientBalance: u64 = 1; // Error code for insufficient balance
-    const EAlreadyEnrolled: u64 = 2; // Error code for already enrolled course
-    const EInvalidCourse: u64 = 3; // Error code for invalid course
-    const EIncompleteCourseDuration: u64 = 4; // Error code for incomplete course duration
-    const ENotEnrolled: u64 = 5; // Error code for not enrolled course
-
     // Functions for managing the e-learning platform
 
     // Function to add a new portal
-    public fun add_portal(
+    public fun new_portal(
         ctx: &mut TxContext
-    ) : Portal {
+    ) : (Portal, PortalCap) {
         let id = object::new(ctx); // Generate a new unique ID
-        Portal {
+        let inner_ = object::uid_to_inner(&id);
+        let portal = Portal {
             id,
             balance: balance::zero<SUI>(), // Initialize balance to zero
-            courses: vector::empty<ID>(), // Initialize empty courses list
+            courses: table::new(ctx), // Initialize empty courses list
             payments: table::new<ID, Receipt>(ctx), // Initialize empty payments table
-            portal: tx_context::sender(ctx), // Set the portal owner to the transaction sender
-        }
+        };
+        let cap = PortalCap {
+            id: object::new(ctx),
+            to: inner_
+        };
+        (portal, cap)
     }
 
     // Function to add a new student
     public fun add_student(
-        student: address,
         ctx: &mut TxContext
     ) : Student {
         let id = object::new(ctx); // Generate a new unique ID
         Student {
             id,
-            student,
+            student: sender(ctx),
             balance: balance::zero<SUI>(), // Initialize balance to zero
             courses: vector::empty<ID>(), // Initialize empty enrolled courses list
             completed_courses: vector::empty<ID>(), // Initialize empty completed courses list
@@ -115,46 +117,43 @@ module decent_learner::decent_learner {
         price: u64,
         duration: u64,
         ctx: &mut TxContext
-    ) : Course {
+    ) {
         let id = object::new(ctx); // Generate a new unique ID
+        let inner = object::uid_to_inner(&id);
         let course = Course {
             id,
             title,
             url,
             educator,
             price,
+            students: table::new(ctx),
             duration,
         };
-
         // Add course to portal's course list
-        vector::push_back(&mut portal.courses, object::id(&course));
-        course
+        table::add(&mut portal.courses, inner, course);
     }
 
     // Function for student to deposit SUI tokens
     public fun deposit(
         student: &mut Student,
-        amount: Coin<SUI>,
+        coin: Coin<SUI>,
     ) {
-        let coin = coin::into_balance(amount); // Convert Coin to Balance
-        balance::join(&mut student.balance, coin); // Add balance to student's balance
+        coin::put(&mut student.balance, coin);
     }
 
     // Function for student to enroll in a course
     public fun enroll(
         portal: &mut Portal,
         student: &mut Student,
-        course: &mut Course,
+        course_: ID,
         clock: &Clock,
         ctx: &mut TxContext
     ) {
+        let course = table::borrow_mut(&mut portal.courses, course_);
         // Check if student has sufficient balance
         assert!(balance::value(&student.balance) >= course.price, EInsufficientBalance);
 
         let course_id = object::uid_to_inner(&course.id);
-
-        // Check if the course is valid
-        assert!(vector::contains<ID>(&portal.courses, &course_id), EInvalidCourse);
 
         // Check if the student is already enrolled
         assert!(!vector::contains<ID>(&student.courses, &course_id), EAlreadyEnrolled);
@@ -164,7 +163,6 @@ module decent_learner::decent_learner {
 
         // Transfer the payment to the educator
         transfer::public_transfer(payment, course.educator);
-
         // Create a new receipt for the payment
         let receipt = Receipt {
             id: object::new(ctx),
@@ -173,50 +171,38 @@ module decent_learner::decent_learner {
             amount: course.price,
             paid_date: clock::timestamp_ms(clock),
         };
-
         // Add the course to the student's enrolled courses list
         vector::push_back(&mut student.courses, object::id(course));
         // Add the receipt to the portal's payments table
         table::add(&mut portal.payments, object::id(&receipt), receipt);
     }
 
-    // Function to get course details
-    public fun get_course_details(
-        student: &mut Student,
-        course: &Course,
-        _ctx: &mut TxContext
-    ): CourseDetails {
-        let course_id = object::uid_to_inner(&course.id);
-
-        assert!(vector::contains<ID>(&student.completed_courses, &course_id), ENotEnrolled);
-
-        CourseDetails {
-            title: course.title,
-            url: course.url,
-            educator: course.educator,
-            price: course.price,
-            duration: course.duration
-        }
+    public fun approve_student_course(cap: &PortalCap, self: &mut Portal, course_: ID, student: address) {
+        assert!(object::id(self) == cap.to, ENotPortal);
+        let course = table::borrow_mut(&mut self.courses, course_);
+        table::add(&mut course.students, student, true);
     }
 
     // Function to issue a certificate to the student for completing a course
     public fun get_certificate(
+        self: &mut Portal,
         student: &mut Student,
-        course: &Course,
+        course_: ID,
         receipt: &Receipt,
         clock: &Clock,
         ctx: &mut TxContext
     ): Certificate {
-        let course_id = object::uid_to_inner(&course.id);
+        let course = table::borrow_mut(&mut self.courses, course_);
         
         // Check if the receipt belongs to the student and the course is valid
         assert!(object::id(student) == receipt.student_id, EInvalidCourse);
-        assert!(vector::contains<ID>(&student.courses, &course_id), EInvalidCourse);
-        assert!(!vector::contains<ID>(&student.completed_courses, &course_id), EAlreadyEnrolled);
+        assert!(vector::contains<ID>(&student.courses, &course_), EInvalidCourse);
+        assert!(!vector::contains<ID>(&student.completed_courses, &course_), EAlreadyEnrolled);
         assert!(clock::timestamp_ms(clock) >= receipt.paid_date + course.duration, EIncompleteCourseDuration);
+        assert!(table::contains(&course.students, sender(ctx)), EAlreadyEnrolled);
 
         // Mark course as completed
-        vector::push_back(&mut student.completed_courses, course_id);
+        vector::push_back(&mut student.completed_courses, course_);
 
         // Create a new certificate
         let certificate = Certificate {
@@ -226,34 +212,23 @@ module decent_learner::decent_learner {
             started_date: receipt.paid_date,
             issued_date: clock::timestamp_ms(clock),
         };
-
         certificate
     }
 
     // Function for educator to withdraw funds from the portal
     public fun withdraw(
+        cap: &PortalCap,
         portal: &mut Portal, 
         amount: u64, 
         ctx: &mut TxContext
-    ) : bool {
+    ) : Coin<SUI> {
         // Check if the transaction sender is the portal owner
-        assert!(portal.portal == tx_context::sender(ctx), ENotPortal);
+        assert!(object::id(portal) == cap.to, ENotPortal);
         // Check if the portal has sufficient balance
         assert!(amount <= balance::value(&portal.balance), EInsufficientBalance);
-
         // Withdraw the specified amount from the portal's balance
-        let amount_to_withdraw = coin::take(&mut portal.balance, amount, ctx);
-        // Transfer the amount to the portal owner
-        transfer::public_transfer(amount_to_withdraw, portal.portal);
-    
-        true // Successful withdrawal
-    }
-
-    // Function to list all courses in the portal
-    public fun list_courses(
-        portal: &Portal
-    ): vector<ID> {
-        portal.courses
+        let coin = coin::take(&mut portal.balance, amount, ctx);
+        coin
     }
 
     // Function to list all enrolled courses for a student
